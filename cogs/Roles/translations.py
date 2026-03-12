@@ -17,9 +17,9 @@ translations = {
         Lo.american_english: "Layout with id {0} not found.",
         Lo.taiwan_chinese: "找不到ID為 {0} 的檢視。"
     },
-    "roles_preview_mode": {
-        Lo.american_english: "-# preview mode",
-        Lo.taiwan_chinese: "-# 預覽模式"
+    "roles_editing_layout": {
+        Lo.american_english: "Editing layout `{0}`",
+        Lo.taiwan_chinese: "正在編輯檢視 `{0}`"
     },
     "roles_select_type": {
         Lo.american_english: "Select a component type",
@@ -90,8 +90,8 @@ translations = {
         Lo.taiwan_chinese: "刪除組件"
     },
     "roles_editing_component": {
-        Lo.american_english: "Editing component...",
-        Lo.taiwan_chinese: "正在編輯組件..."
+        Lo.american_english: "Editing component",
+        Lo.taiwan_chinese: "正在編輯組件"
     },
     "roles_clear": {
         Lo.american_english: "Clear",
@@ -138,8 +138,8 @@ translations = {
         Lo.taiwan_chinese: "變更已儲存。"
     },
     "roles_layout_created": {
-        Lo.american_english: "Layout created successfully, use `/roles send layout_id:{0}` to send the message.",
-        Lo.taiwan_chinese: "檢視建立成功，使用 `/roles send layout_id:{0}` 來傳送訊息。"
+        Lo.american_english: "Layout created successfully, use the following command to send the message.\n ```/roles send layout_id:{0}```",
+        Lo.taiwan_chinese: "檢視建立成功，使用下面這條指令來傳送訊息。\n```/roles send layout_id:{0}```"
     },
     "roles_editing_cancelled": {
         Lo.american_english: "Editing cancelled.",

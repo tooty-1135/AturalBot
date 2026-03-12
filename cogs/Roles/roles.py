@@ -88,7 +88,8 @@ class Roles(commands.Cog):
 
         preview_layout = views.RolesView_Preview(
             old_class=RolesEditorBase(author=interaction.user, cog=self, components=[], locale=interaction.locale))
-        await interaction.response.send_message(_('roles_preview_mode', interaction), view=preview_layout)
+        message = await interaction.response.send_message(view=preview_layout)
+        preview_layout.message = message.resource
 
     @roles.command(name=locale_str("edit"))
     @app_commands.describe(
@@ -151,9 +152,11 @@ class Roles(commands.Cog):
             RolesEditorBase(author=interaction.user, cog=self, layout_id=selected_layout.id,
                             components=get_ordered_components(selected_layout.components), locale=interaction.locale))
         if interaction.response.is_done():
-            await interaction.edit_original_response(content=_('roles_preview_mode', interaction), view=preview_view)
+            message = await interaction.edit_original_response(view=preview_view)
         else:
-            await interaction.response.send_message(content=_('roles_preview_mode', interaction), view=preview_view)
+            message = await interaction.response.send_message(view=preview_view)
+
+        preview_view.message = message.resource
 
     delete = app_commands.Group(name=locale_str("delete"), description="Delete roles menu or message", parent=roles)
 

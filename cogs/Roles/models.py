@@ -2,8 +2,8 @@ import enum
 import uuid
 
 from discord import ButtonStyle
-from sqlalchemy import ForeignKey, Integer, String, Column, UniqueConstraint, TypeDecorator, Enum, Boolean
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import ForeignKey, Integer, String, Column, TypeDecorator, Enum, Boolean
+from sqlalchemy.orm import Mapped, relationship
 
 from database import Base
 

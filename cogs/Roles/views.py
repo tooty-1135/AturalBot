@@ -2,14 +2,13 @@ import logging
 
 import discord
 from discord import ButtonStyle, Color, SelectOption
-from discord.ui import Button, Select, View, RoleSelect
+from discord.ui import Button, Select, View, RoleSelect, LayoutView, ActionRow, Container, TextDisplay
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
 from utils.views import interaction_defer
 from . import models
-from .models import Component, ComponentType as RolesComponentType
 
 from translator import Translator
 from .translations import translations
@@ -43,11 +42,11 @@ _ = Translator(translations).translate
 #         self.view.stop()
 
 
-def get_ordered_components(components: list[Component]) -> list[list[Component]]:
+def get_ordered_components(components: list[models.Component]) -> list[list[models.Component]]:
     """把一維結構的components轉成二維"""
     # component要依照順序排列
-    result: list[list[Component]] = []
-    current_row: list[Component] = []
+    result: list[list[models.Component]] = []
+    current_row: list[models.Component] = []
 
     for comp in components:
         current_row.append(comp)
@@ -69,9 +68,9 @@ def get_ordered_components(components: list[Component]) -> list[list[Component]]
     return result
 
 
-def get_components_list(components: list[list[Component]]) -> list[Component]:
+def get_components_list(components: list[list[models.Component]]) -> list[models.Component]:
     """把二維結構的components轉成一維，並且補上linebreak"""
-    result: list[Component] = []
+    result: list[models.Component] = []
 
     position = 0
 
@@ -91,7 +90,7 @@ def get_components_list(components: list[list[Component]]) -> list[Component]:
     return result
 
 
-async def sync_components(session: AsyncSession, layout_id: str, new_components: list[Component]):
+async def sync_components(session: AsyncSession, layout_id: str, new_components: list[models.Component]):
     """
     同步 DB 中的 components 和 roles (async 版本)
     """
@@ -158,15 +157,17 @@ def available_rows(components, min_comps: int, exclude_select: bool = False):
     for i in range(0, rows):
         if len(components[i]) < min_comps:
             if exclude_select:
-                if any(c.type in [RolesComponentType.SELECT, RolesComponentType.SELECT_TOGGLE] for c in components[i]):
+                if any(c.type in [models.ComponentType.SELECT, models.ComponentType.SELECT_TOGGLE] for c in
+                       components[i]):
                     continue
             positions.append(i)
 
     return positions
 
 
-class RolesEditorBase(View):
+class RolesEditorBase(LayoutView):
     """View sent to create a roles selection menu for members."""
+    message: discord.InteractionMessage | discord.Message
 
     def __init__(self, author: discord.Member, cog, components, layout_id: str = None, locale: discord.Locale = None):
         super().__init__()
@@ -190,35 +191,37 @@ class RolesEditor_AddComp_Type(RolesEditorBase):
         self.comp_type_select = Select(
             placeholder=_('roles_select_type', self.locale),
             options=[
-                SelectOption(label=_('roles_select_type_button', self.locale), value=RolesComponentType.BUTTON.value),
-                SelectOption(label=_('roles_select_type_select', self.locale), value=RolesComponentType.SELECT.value),
+                SelectOption(label=_('roles_select_type_button', self.locale), value=models.ComponentType.BUTTON.value),
+                SelectOption(label=_('roles_select_type_select', self.locale), value=models.ComponentType.SELECT.value),
                 SelectOption(label=_('roles_select_type_toggle', self.locale),
-                             value=RolesComponentType.SELECT_TOGGLE.value)
-            ],
-            row=0
+                             value=models.ComponentType.SELECT_TOGGLE.value)
+            ]
         )
         self.comp_type_select.callback = self.select_callback
-        self.add_item(self.comp_type_select)
+        self.add_item(ActionRow(self.comp_type_select))
 
-        self.back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red, row=1)
+        self.back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red)
         self.back_button.callback = self.back_callback
-        self.add_item(self.back_button)
+        # TODO：確認直接將component直接放在ActionRow裡面會不會有問題
+        self.add_item(ActionRow(self.back_button))
 
     async def select_callback(self, interaction: discord.Interaction):
         selected = self.comp_type_select.values[0]
-        await interaction.response.edit_message(content=f"Selected component type: {selected}",
-                                                view=RolesEditor_AddComp(old_class=self,
-                                                                         comp_type=RolesComponentType(selected)))
+        # content=f"Selected component type: {selected}",
+        view = RolesEditor_AddComp(old_class=self, comp_type=models.ComponentType(selected))
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
+
         self.stop()
 
     async def back_callback(self, interaction: discord.Interaction):
         new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(content=_('roles_preview_mode', self.locale), view=new_view)
+        await interaction.response.edit_message(view=new_view)
         self.stop()
 
 
 class RolesEditor_AddComp(RolesEditorBase):
-    def __init__(self, old_class, comp_type: RolesComponentType):
+    def __init__(self, old_class, comp_type: models.ComponentType):
         super().__init__(author=old_class.author, components=old_class.components, layout_id=old_class.layout_id,
                          cog=old_class.cog, locale=old_class.locale)
 
@@ -226,18 +229,18 @@ class RolesEditor_AddComp(RolesEditorBase):
 
         rows = len(self.components)
 
+        # TODO: 爲了讓新的行能夠出現所以先加一個空行，如果之後空行沒東西的話再刪掉，可以優化
         if rows < 4:
             self.components.append([])
 
         if comp_type.value.startswith("select"):
-            role_select = RoleSelect(placeholder=_('roles_select_roles', self.locale), max_values=24, row=0)
+            role_select = RoleSelect(placeholder=_('roles_select_roles', self.locale), max_values=24)
 
             aval_rows = available_rows(self.components, 1)
             if len(aval_rows) == 0:
                 position_select = discord.ui.Select(
                     placeholder=_('roles_no_row', self.locale),
                     options=[SelectOption(label=_('roles_no_row', self.locale))],
-                    row=1,
                     max_values=1,
                     disabled=True
                 )
@@ -246,18 +249,16 @@ class RolesEditor_AddComp(RolesEditorBase):
                     placeholder=_('roles_select_position', self.locale),
                     options=[SelectOption(label=_('roles_row', self.locale).format(i + 1), value=str(i)) for i in
                              aval_rows],
-                    row=1,
                     max_values=1
                 )
         else:
-            role_select = discord.ui.RoleSelect(placeholder=_('roles_select_role', self.locale), max_values=1, row=0)
+            role_select = discord.ui.RoleSelect(placeholder=_('roles_select_role', self.locale), max_values=1)
 
             aval_rows = available_rows(self.components, 5, exclude_select=True)
             if len(aval_rows) == 0:
                 position_select = discord.ui.Select(
                     placeholder=_('roles_no_row', self.locale),
                     options=[SelectOption(label=_('roles_no_row', self.locale))],
-                    row=1,
                     max_values=1,
                     disabled=True
                 )
@@ -266,25 +267,28 @@ class RolesEditor_AddComp(RolesEditorBase):
                     placeholder=_('roles_select_position', self.locale),
                     options=[SelectOption(label=_('roles_row', self.locale).format(i + 1), value=str(i)) for i in
                              aval_rows],
-                    row=1,
                     max_values=1
                 )
 
         self.role_select = role_select
         role_select.callback = interaction_defer
-        self.add_item(role_select)
+        self.add_item(ActionRow(role_select))
 
         self.position_select = position_select
         position_select.callback = interaction_defer
-        self.add_item(position_select)
+        self.add_item(ActionRow(position_select))
 
-        self.confirm_button = Button(label=_('roles_confirm', self.locale), style=ButtonStyle.green, row=2)
+        action_row = ActionRow()
+
+        self.confirm_button = Button(label=_('roles_confirm', self.locale), style=ButtonStyle.green)
         self.confirm_button.callback = self.confirm
-        self.add_item(self.confirm_button)
+        action_row.add_item(self.confirm_button)
 
-        self.back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red, row=2)
+        self.back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red)
         self.back_button.callback = self.back_callback
-        self.add_item(self.back_button)
+        action_row.add_item(self.back_button)
+
+        self.add_item(action_row)
 
     async def confirm(self, interaction: discord.Interaction):
         if len(self.role_select.values) == 0 or len(self.position_select.values) == 0:
@@ -293,17 +297,17 @@ class RolesEditor_AddComp(RolesEditorBase):
             return
 
         match self.comp_type:
-            case RolesComponentType.BUTTON:
+            case models.ComponentType.BUTTON:
                 comp_label = self.role_select.values[0].name
-            case RolesComponentType.SELECT:
+            case models.ComponentType.SELECT:
                 comp_label = _('roles_select_roles', self.locale)
-            case RolesComponentType.SELECT_TOGGLE:
+            case models.ComponentType.SELECT_TOGGLE:
                 comp_label = _('roles_select_role', self.locale)
             case _:
                 comp_label = "Add role"
 
         self.components[int(self.position_select.values[0])].append(
-            Component(
+            models.Component(
                 type=self.comp_type,
                 label=comp_label,
                 style=ButtonStyle.gray if self.comp_type.value.startswith("button") else None,
@@ -311,8 +315,11 @@ class RolesEditor_AddComp(RolesEditorBase):
             )
         )
 
+        if not self.components[-1]:  # 如果最後一行是之前為了讓新行出現而加的空行，現在有東西了就不用了
+            self.components.pop()
+
         new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(content=_('roles_preview_mode', self.locale), view=new_view)
+        await interaction.response.edit_message(view=new_view)
 
         self.stop()
 
@@ -321,7 +328,7 @@ class RolesEditor_AddComp(RolesEditorBase):
             del self.components[-1]
 
         new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(content=_('roles_preview_mode', self.locale), view=new_view)
+        await interaction.response.edit_message(view=new_view)
         self.stop()
 
 
@@ -347,43 +354,48 @@ class RolesEditor_EditComp(RolesEditorBase):
         self.index = index
         self.component = self.components[row][index]
 
+        self.add_item(TextDisplay(_('roles_editing_component', self.locale)))
+
+        preview_container = Container()
+
+        actions_action_row = ActionRow()
+
         comp = self.component
         if comp.type.value.startswith("select"):
             select = Select(
                 placeholder=comp.label,
-                options=[SelectOption(label="testtest", value="testtest")],
-                disabled=True,
-                row=0
+                options=[SelectOption(label="This is a preview.", value="testtest")],
             )
-            self.add_item(select)
+            preview_container.add_item(ActionRow(select))
         elif comp.type.value.startswith("button"):
             button = Button(
                 label=comp.label,
                 style=comp.style,
-                disabled=True,
-                row=0
             )
-            self.add_item(button)
+            preview_container.add_item(ActionRow(button))
 
-            edit_style_button = Button(label=_('roles_edit_style', self.locale), style=ButtonStyle.blurple, row=1)
+            edit_style_button = Button(label=_('roles_edit_style', self.locale), style=ButtonStyle.blurple)
             edit_style_button.callback = self.edit_style
-            self.add_item(edit_style_button)
+            actions_action_row.add_item(edit_style_button)
 
-        edit_text_button = Button(label=_('roles_edit_text', self.locale), style=ButtonStyle.blurple, row=1)
+        self.add_item(preview_container)
+
+        edit_text_button = Button(label=_('roles_edit_text', self.locale), style=ButtonStyle.blurple)
         edit_text_button.callback = self.edit_label
-        self.add_item(edit_text_button)
+        actions_action_row.add_item(edit_text_button)
 
-        self.add_item(
-            Button(label=_('roles_move_component', self.locale), style=ButtonStyle.link, url="https://example.com",
-                   row=1))
+        actions_action_row.add_item(
+            Button(label=_('roles_move_component', self.locale), style=ButtonStyle.link, url="https://example.com", ))
 
-        del_comp_button = Button(label=_('roles_delete_component', self.locale), style=ButtonStyle.red, row=1)
+        del_comp_button = Button(label=_('roles_delete_component', self.locale), style=ButtonStyle.red)
         del_comp_button.callback = self.delete_component
-        self.add_item(del_comp_button)
+        actions_action_row.add_item(del_comp_button)
 
-        back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red, row=2)
+        self.add_item(actions_action_row)
+
+        back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red)
         back_button.callback = self.back_callback
-        self.add_item(back_button)
+        self.add_item(ActionRow(back_button))
 
     async def edit_label(self, interaction: discord.Interaction):
         modal = EditComp_Modal(current_label=self.component.label, locale=self.locale)
@@ -393,13 +405,14 @@ class RolesEditor_EditComp(RolesEditorBase):
         if hasattr(modal, 'new_label'):
             self.component.label = modal.new_label
 
-            await interaction.message.edit(content=_('roles_editing_component', self.locale),
-                                           view=RolesEditor_EditComp(old_class=self, row=self.row,
-                                                                     index=self.index))
+            view = RolesEditor_EditComp(old_class=self, row=self.row, index=self.index)
+            await interaction.message.edit(view=view)
+            view.message = interaction.message
 
     async def edit_style(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(view=RolesEditor_EditCompStyle(old_class=self, row=self.row,
-                                                                               index=self.index))
+        view = RolesEditor_EditCompStyle(old_class=self, row=self.row, index=self.index)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
 
     async def delete_component(self, interaction: discord.Interaction):
         logging.debug(f"total {len(self.components[self.row])} components in row {self.row}")
@@ -409,11 +422,11 @@ class RolesEditor_EditComp(RolesEditorBase):
             del self.components[self.row][self.index]
 
         new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(content=_('roles_preview_mode', self.locale), view=new_view)
+        await interaction.response.edit_message(view=new_view)
 
     async def back_callback(self, interaction: discord.Interaction):
         new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(content=_('roles_preview_mode', self.locale), view=new_view)
+        await interaction.response.edit_message(view=new_view)
         self.stop()
 
 
@@ -425,26 +438,28 @@ class RolesEditor_EditCompStyle(RolesEditorBase):
         self.index = index
         self.component = self.components[row][index]
 
+        self.add_item(TextDisplay(_('roles_editing_component', self.locale)))
+
+        action_row = ActionRow()
+
         comp = self.component
         if comp.type.value.startswith("select"):
             select = Select(
                 placeholder=comp.label,
                 disabled=True,
-                row=0
             )
-            self.add_item(select)
+            action_row.add_item(select)
         elif comp.type.value.startswith("button"):
             button = Button(
                 label=comp.label,
                 style=comp.style,
                 disabled=True,
-                row=0
             )
-            self.add_item(button)
+            action_row.add_item(button)
+        self.add_item(action_row)
 
         self.style_select = Select(
             placeholder=_('roles_select_style', self.locale),
-            row=1,
             options=[
                 SelectOption(label=_('roles_style_green', self.locale), value=str(ButtonStyle.green.value)),
                 SelectOption(label=_('roles_style_blurple', self.locale), value=str(ButtonStyle.blurple.value)),
@@ -453,29 +468,32 @@ class RolesEditor_EditCompStyle(RolesEditorBase):
             ]
         )
         self.style_select.callback = self.select_style
-        self.add_item(self.style_select)
+        self.add_item(ActionRow(self.style_select))
 
-        back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red, row=2)
+        back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red)
         back_button.callback = self.back_callback
-        self.add_item(back_button)
+        self.add_item(ActionRow(back_button))
 
     async def select_style(self, interaction: discord.Interaction):
         selected = int(self.style_select.values[0])
         self.component.style = ButtonStyle(selected)
 
-        await interaction.response.edit_message(view=RolesEditor_EditComp(old_class=self, row=self.row,
-                                                                          index=self.index))
+        view = RolesEditor_EditComp(old_class=self, row=self.row, index=self.index)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
 
     async def back_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(view=RolesEditor_EditComp(old_class=self, row=self.row,
-                                                                          index=self.index))
+        view = RolesEditor_EditComp(old_class=self, row=self.row, index=self.index)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
+
         self.stop()
 
 
 class RolesSelect(Select):
     """Select menu with the list of assignable roles."""
 
-    def __init__(self, roles: list[models.Role], label: str, custom_id: str, row: int, max_values: int = None):
+    def __init__(self, roles: list[models.Role], label: str, custom_id: str, max_values: int = None):
         # roles = sorted(roles, reverse=True)
         roles = roles
         options = [discord.SelectOption(label=role.label, value=str(role.role_id)) for role in roles]
@@ -491,8 +509,7 @@ class RolesSelect(Select):
             placeholder=self.label,
             options=options,
             max_values=max_values or len(options),
-            custom_id=custom_id,
-            row=row,
+            custom_id=custom_id
         )
 
     async def clear_roles(self, interaction: discord.Interaction):
@@ -542,58 +559,77 @@ class RolesSelect(Select):
         )
 
 
-class RolesViewBase(View):
-    """Base View class for role selection UI."""
+class RolesViewBase(LayoutView):
+    """Base View class for role selection UI.
+
+    preview=True: 用於編輯模式的預覽，180秒後過期
+    preview=False: 用於正式的角色選擇，沒有過期時間"""
 
     def __init__(
-            self, components: list[list[Component]], locale: discord.Locale = None
+            self, components: list[list[models.Component]], label: str = None, locale: discord.Locale = None,
+            preview: bool = False
     ):
-        super().__init__(timeout=None)
+        super().__init__(timeout=None if not preview else 180)
         self.locale = locale
 
-        if components == []:
+        # TODO:這個是否可以移動到Preview
+        self.message: discord.InteractionMessage
+
+        if label:
+            self.add_item(TextDisplay(label))
+
+        if preview:
+            container = Container()
+        else:
+            container = self
+
+        if not components:  # if components = []
+            action_row = ActionRow()
+
             button = Button(
                 label=_('roles_no_components', self.locale),
                 style=ButtonStyle.gray,
-                row=0,
                 disabled=True,
             )
-            self.add_item(button)
+            action_row.add_item(button)
+
+            container.add_item(action_row)
 
         self.components = components
-
         logging.debug(self.components)
 
         for row, comps in enumerate(components):
+            action_row = ActionRow()
             for pos, comp in enumerate(comps):
-                if comp.type == RolesComponentType.SELECT:
+                if comp.type == models.ComponentType.SELECT:
                     select = RolesSelect(
                         label=comp.label,
                         roles=[r for r in comp.roles],
                         custom_id=f"{row}, {pos}",
-                        row=row
                     )
                     select.callback = self.select_callback
-                    self.add_item(select)
-                if comp.type == RolesComponentType.SELECT_TOGGLE:
+                    action_row.add_item(select)
+                if comp.type == models.ComponentType.SELECT_TOGGLE:
                     select = RolesSelect(
                         label=comp.label,
                         roles=[r for r in comp.roles],
                         custom_id=f"{row}, {pos}",
-                        row=row,
                         max_values=1
                     )
                     select.callback = self.select_callback
-                    self.add_item(select)
-                elif comp.type == RolesComponentType.BUTTON:
+                    action_row.add_item(select)
+                elif comp.type == models.ComponentType.BUTTON:
                     button = Button(
                         label=comp.label,
                         style=comp.style,
                         custom_id=f"{row}, {pos}, {comp.roles[0].role_id}",
-                        row=row,
                     )
                     button.callback = self.button_callback
-                    self.add_item(button)
+                    action_row.add_item(button)
+            container.add_item(action_row)
+
+        if preview:
+            self.add_item(container)
 
     async def select_callback(self, interaction: discord.Interaction):
         """Override this method in subclasses"""
@@ -607,26 +643,33 @@ class RolesViewBase(View):
 class RolesView_Preview(RolesViewBase):
     """Preview version of the roles view with non-functional callbacks."""
 
-    def __init__(self, old_class):
-        super().__init__(components=old_class.components, locale=old_class.locale)
+    def __init__(self, old_class, message: discord.InteractionMessage = None):
+        super().__init__(components=old_class.components, locale=old_class.locale, preview=True,
+                         label=_('roles_editing_layout', old_class.locale).format(old_class.layout_id))
         self.author = old_class.author
         self.layout_id = old_class.layout_id
         self.cog = old_class.cog
 
-        save_button = Button(label=_('roles_save', self.locale), style=ButtonStyle.green, row=4)
+        self.message = message
+
+        action_row = ActionRow()
+
+        save_button = Button(label=_('roles_save', self.locale), style=ButtonStyle.green)
         save_button.callback = self.save_callback
-        self.add_item(save_button)
+        action_row.add_item(save_button)
 
-        cancel_button = Button(label=_('roles_cancel', self.locale), style=ButtonStyle.red, row=4)
+        cancel_button = Button(label=_('roles_cancel', self.locale), style=ButtonStyle.red)
         cancel_button.callback = self.cancel_callback
-        self.add_item(cancel_button)
+        action_row.add_item(cancel_button)
 
-        add_button = Button(label=_('roles_add_component', self.locale), style=ButtonStyle.blurple, row=4)
+        add_button = Button(label=_('roles_add_component', self.locale), style=ButtonStyle.blurple)
         add_button.callback = self.add_callback
-        self.add_item(add_button)
+        action_row.add_item(add_button)
 
-        self.add_item(
-            Button(label=_('roles_dashboard', self.locale), style=ButtonStyle.link, url="https://example.com", row=4))
+        action_row.add_item(
+            Button(label=_('roles_dashboard', self.locale), style=ButtonStyle.link, url="https://example.com"))
+
+        self.add_item(action_row)
 
     async def save_callback(self, interaction: discord.Interaction):
         if self.layout_id:
@@ -651,7 +694,9 @@ class RolesView_Preview(RolesViewBase):
                     new_view = RolesView_Normal(components=self.components, locale=interaction.guild.preferred_locale)
                     await message.edit(view=new_view)
 
-                await interaction.response.edit_message(content=_('roles_changes_saved', self.locale), view=None)
+                text_view = LayoutView()
+                text_view.add_item(TextDisplay(_('roles_changes_saved', self.locale)))
+                await interaction.response.edit_message(view=text_view)
                 self.stop()
         else:
             async with self.cog.bot.db.session() as session:
@@ -664,33 +709,35 @@ class RolesView_Preview(RolesViewBase):
                 new_components = get_components_list(self.components)
                 await sync_components(session, view_model.id, new_components)
 
-                await interaction.response.edit_message(
-                    content=_('roles_layout_created', self.locale).format(view_model.id),
-                    view=None)
+                text_view = LayoutView()
+                text_view.add_item(TextDisplay(_('roles_layout_created', self.locale).format(view_model.id)))
+                await interaction.response.edit_message(view=text_view)
                 self.stop()
 
     async def cancel_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(content=_('roles_editing_cancelled', self.locale), view=None)
+        text_view = LayoutView()
+        text_view.add_item(TextDisplay(_('roles_editing_cancelled', self.locale)))
+        await interaction.response.edit_message(view=text_view)
         self.stop()
 
     async def add_callback(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(
-            content=_('roles_select_type_add', self.locale),
-            view=RolesEditor_AddComp_Type(old_class=self))
+        view = RolesEditor_AddComp_Type(old_class=self)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
 
     async def button_callback(self, interaction: discord.Interaction):
         row, index, rid = map(int, interaction.data['custom_id'].split(", "))
 
-        await interaction.response.edit_message(
-            content=_('roles_editing_component', self.locale),
-            view=RolesEditor_EditComp(old_class=self, row=int(row), index=int(index)))
+        view = RolesEditor_EditComp(old_class=self, row=int(row), index=int(index))
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
 
     async def select_callback(self, interaction: discord.Interaction):
         row, index = map(int, interaction.data['custom_id'].split(", "))
 
-        await interaction.response.edit_message(
-            content=_('roles_editing_component', self.locale),
-            view=RolesEditor_EditComp(old_class=self, row=int(row), index=int(index)))
+        view = RolesEditor_EditComp(old_class=self, row=int(row), index=int(index))
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
 
     async def interaction_check(self, interaction: discord.Interaction):
         """Only the command author can use the View."""
@@ -699,7 +746,7 @@ class RolesView_Preview(RolesViewBase):
 
 
 class RolesView_Normal(RolesViewBase):
-    """Normal version of the roles view with working callbacks."""
+    """Normal version of the roles view with working callback/s."""
 
     # TODO: 考慮將roles的選單獨立出來，照著原本的寫法
     async def select_callback(self, interaction: discord.Interaction):
