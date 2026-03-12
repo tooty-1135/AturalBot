@@ -6,43 +6,46 @@ from discord.ext import commands
 
 from bot import Bot
 from sqlalchemy import select
+
+from utils.views import confirm_prompt
 from . import views, models
+from .views import change_db_user_limit, change_db_channel_name
 
 
-class setup_modal(discord.ui.Modal, title='Setup Dynamic Voice Channel'):
-    def __init__(self, bot: Bot):
-        self.bot = bot
-        super().__init__()
-
-    ca_id = discord.ui.TextInput(label='類別ID', placeholder="1128923701455360146")
-    ch_id = discord.ui.TextInput(label='頻道ID', placeholder="1129012268814835782")
-
-    async def on_submit(self, interaction: discord.Interaction):
-        category = self.bot.get_channel(int(self.ca_id.value))
-        channel = self.bot.get_channel(int(self.ch_id.value))
-
-        if not isinstance(category, discord.CategoryChannel) or not isinstance(channel, discord.VoiceChannel):
-            await interaction.response.send_message("無效的類別ID或頻道ID。請確認它們是正確的類型。", ephemeral=True)
-            return
-
-        async with self.bot.db.session() as session:
-            db_guild: models.Guild = await session.scalar(
-                select(models.Guild)
-                .where(models.Guild.guild_id == interaction.guild.id)
-            )
-
-            if not db_guild:
-                db_guild = models.Guild(
-                    guild_id=interaction.guild.id,
-                    owner_id=interaction.user.id,
-                )
-                session.add(db_guild)
-
-            db_guild.voice_channel_id = channel.id
-            db_guild.voice_category_id = category.id
-            await session.commit()
-
-            await interaction.response.edit_message(content="動態語音頻道設定完成")
+# class setup_modal(discord.ui.Modal, title='Setup Dynamic Voice Channel'):
+#     def __init__(self, bot: Bot):
+#         self.bot = bot
+#         super().__init__()
+#
+#     ca_id = discord.ui.TextInput(label='類別ID', placeholder="1128923701455360146")
+#     ch_id = discord.ui.TextInput(label='頻道ID', placeholder="1129012268814835782")
+#
+#     async def on_submit(self, interaction: discord.Interaction):
+#         category = self.bot.get_channel(int(self.ca_id.value))
+#         channel = self.bot.get_channel(int(self.ch_id.value))
+#
+#         if not isinstance(category, discord.CategoryChannel) or not isinstance(channel, discord.VoiceChannel):
+#             await interaction.response.send_message("無效的類別ID或頻道ID。請確認它們是正確的類型。", ephemeral=True)
+#             return
+#
+#         async with self.bot.db.session() as session:
+#             db_guild: models.Guild = await session.scalar(
+#                 select(models.Guild)
+#                 .where(models.Guild.guild_id == interaction.guild.id)
+#             )
+#
+#             if not db_guild:
+#                 db_guild = models.Guild(
+#                     guild_id=interaction.guild.id,
+#                     owner_id=interaction.user.id,
+#                 )
+#                 session.add(db_guild)
+#
+#             db_guild.voice_channel_id = channel.id
+#             db_guild.voice_category_id = category.id
+#             await session.commit()
+#
+#             await interaction.response.edit_message(content="動態語音頻道設定完成")
 
 
 # class setup_modal(discord.ui.Modal, title='Setup Dynamic Voice Channel'):
@@ -76,7 +79,7 @@ class setup_modal(discord.ui.Modal, title='Setup Dynamic Voice Channel'):
 class DVC(commands.Cog):
     """動態語音頻道"""
 
-    def __init__(self, bot):
+    def __init__(self, bot: Bot):
         self.bot = bot
 
     @commands.Cog.listener()
@@ -92,12 +95,17 @@ class DVC(commands.Cog):
                 if guild:
                     if after.channel.id == guild.voice_channel_id:
                         old_channel = await session.scalar(
-                            select(models.VoiceChannel.user_id)
+                            select(models.VoiceChannel.voice_id)
                             .where(models.VoiceChannel.user_id == member.id)
                         )
                         if old_channel:
-                            await member.send("創建語音頻道的速度太快了!請等待15秒!")
-                            await asyncio.sleep(15)
+                            channel = self.bot.get_channel(old_channel)
+                            if channel:
+                                await member.move_to(channel)
+                                return
+                            else:
+                                await session.delete(old_channel)
+                                await session.commit()
 
                         setting: models.UserSettings = await session.scalar(
                             select(models.UserSettings)
@@ -137,11 +145,10 @@ class DVC(commands.Cog):
                 if voice_channel:
                     channel = self.bot.get_channel(voice_channel.voice_id)
                     if channel and len(channel.members) == 0:
-                        await channel.delete()
                         await asyncio.sleep(3)
+                        # 資料庫的刪除動作由 on_guild_channel_delete 負責，這裡不需要刪除資料庫紀錄
 
-                        await session.delete(voice_channel)
-                        await session.commit()
+                        await channel.delete()
 
     @commands.Cog.listener()
     async def on_guild_channel_delete(self, channel: discord.abc.GuildChannel):
@@ -172,7 +179,8 @@ class DVC(commands.Cog):
 
     @dvc.command()
     @commands.has_permissions(manage_channels=True)
-    async def setup(self, interaction: discord.Interaction):
+    async def setup(self, interaction: discord.Interaction, category: discord.CategoryChannel,
+                    channel: discord.VoiceChannel):
         """初始化動態語音頻道"""
 
         async with self.bot.db.session() as session:
@@ -182,22 +190,35 @@ class DVC(commands.Cog):
             )
 
             if db_guild:
-                view = discord.ui.View()
-                button = discord.ui.Button(label="繼續", style=discord.ButtonStyle.danger)
-                button.callback = lambda i: i.response.send_modal(setup_modal(self.bot))
-                view.add_item(button)
-                back = discord.ui.Button(label="返回", style=discord.ButtonStyle.blurple)
-                back.callback = lambda i: i.response.edit_message(content="已取消操作", view=None)
-                view.add_item(back)
+                will_continue = await confirm_prompt(interaction, "已經存在設定，繼續操作會覆蓋舊的設定，是否繼續？")
 
-                await interaction.response.send_message("存在舊的設定檔，繼續操作會覆蓋舊的設定",
-                                                        view=view, ephemeral=True)
-                return
+                if will_continue:
+                    await interaction.response.edit_message("將會覆蓋舊的設定")
 
-        await interaction.response.send_modal(setup_modal(self.bot))
+                    db_guild.voice_channel_id = channel.id
+                    db_guild.voice_category_id = category.id
+                    await session.commit()
+
+                    await interaction.response.send_message(content="動態語音頻道設定完成")
+                    return
+                else:
+                    await interaction.response.edit_message("已取消操作")
+                    return
+
+            db_guild = models.Guild(
+                guild_id=interaction.guild.id,
+            )
+            session.add(db_guild)
+
+            db_guild.voice_channel_id = channel.id
+            db_guild.voice_category_id = category.id
+            await session.commit()
+
+            await interaction.response.send_message(content="動態語音頻道設定完成")
 
     @dvc.command()
     async def control(self, interaction: discord.Interaction):
+        """動態語音頻道的控制面板"""
         async with self.bot.db.session() as session:
             voice_id: models.VoiceChannel.voice_id = await session.scalar(
                 select(models.VoiceChannel.voice_id)
@@ -205,18 +226,19 @@ class DVC(commands.Cog):
             )
 
             if not voice_id:
-                await interaction.response.send_message("找不到目標語音頻道，你必須先連接請先加入一個動態頻道", ephemeral=True)
+                await interaction.response.send_message("找不到目標語音頻道，你必須先連接請先加入一個動態頻道",
+                                                        ephemeral=True)
                 return
 
             view = views.DvcControl(views.DvcControlBase(interaction.user, views.DvcState(), self, interaction.locale))
-            await interaction.response.send_message(view=view, ephemeral=True)
-
+            ir = await interaction.response.send_message(view=view, ephemeral=True)
+            view.message = ir.resource
 
     @dvc.command()
     async def destroy(self, interaction: discord.Interaction):
+        """刪除動態語音頻道設定檔"""
         await self.on_guild_remove(interaction.guild)
         await interaction.response.send_message("執行完成")
-
 
     # @dvc.command()
     # async def permit(self, interaction: discord.Interaction, member: discord.Member):
@@ -263,7 +285,7 @@ class DVC(commands.Cog):
     #             f'拒絕 {member.name} 進入 {interaction.user.mention} 的頻動態語音頻道 ❌')
 
     @dvc.command()
-    async def limit(self, interaction: discord.Interaction, limit: int):
+    async def limit(self, interaction: discord.Interaction, limit: app_commands.Range[int, 1, 99] = 0):
         """設定自己動態語音頻道的最大人數"""
         async with self.bot.db.session() as session:
             voice_id: models.VoiceChannel.voice_id = await session.scalar(
@@ -276,23 +298,13 @@ class DVC(commands.Cog):
             else:
                 channel = self.bot.get_channel(voice_id)
                 await channel.edit(user_limit=limit)
+
+                await change_db_user_limit(session, interaction.user.id, limit)
+
                 await interaction.response.send_message("執行完成")
 
-                voice_id: models.UserSettings = await session.scalar(
-                    select(models.UserSettings)
-                    .where(models.UserSettings.user_id == interaction.user.id)
-                )
-
-                if voice_id is None:
-                    voice = models.UserSettings(user_id=interaction.user.id, channel_name=f'{interaction.user.name}',
-                                                channel_max_people=limit)
-                    session.add(voice)
-                else:
-                    voice_id.channel_max_people = limit
-                await session.commit()
-
     @dvc.command()
-    async def rename(self, interaction: discord.Interaction, *, name: str):
+    async def rename(self, interaction: discord.Interaction, name: str):
         """更改你的動態語音頻道名稱"""
         async with self.bot.db.session() as session:
             voice_id: models.VoiceChannel.voice_id = await session.scalar(
@@ -305,17 +317,7 @@ class DVC(commands.Cog):
             else:
                 channel = self.bot.get_channel(voice_id)
                 await channel.edit(name=name)
+
+                await change_db_channel_name(session, interaction.user.id, name)
+
                 await interaction.response.send_message("執行完成")
-
-                voice: models.UserSettings = await session.scalar(
-                    select(models.UserSettings.channel_name)
-                    .where(models.UserSettings.user_id == interaction.user.id)
-                )
-
-                if voice is None:
-                    voice = models.UserSettings(user_id=interaction.user.id, channel_name=name, channel_max_people=0)
-                    session.add(voice)
-                else:
-                    voice.channel_name = name
-
-                await session.commit()

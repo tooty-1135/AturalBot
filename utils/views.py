@@ -12,7 +12,7 @@ class Confirm(ui.View):
     @ui.button(
         label="Confirm",
         style=discord.ButtonStyle.green,
-        emoji="\N{WHITE HEAVY CHECK MARK}",
+        # emoji="\N{WHITE HEAVY CHECK MARK}",
     )
     async def on_confirm(self, interaction: discord.Interaction, button: ui.Button):
         self.interaction = interaction
@@ -22,7 +22,7 @@ class Confirm(ui.View):
     @ui.button(
         label="Cancel",
         style=discord.ButtonStyle.gray,
-        emoji="\N{CROSS MARK}",
+        # emoji="\N{CROSS MARK}",
     )
     async def on_cancel(self, interaction: discord.Interaction, button: ui.Button):
         self.interaction = interaction

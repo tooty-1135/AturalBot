@@ -8,7 +8,6 @@ class Guild(Base):
     __tablename__ = 'dvc_guild'
 
     guild_id = Column(DiscordID, primary_key=True)
-    owner_id = Column(DiscordID, nullable=False)
     voice_channel_id = Column(DiscordID)
     voice_category_id = Column(DiscordID)
 
