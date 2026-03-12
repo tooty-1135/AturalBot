@@ -6,8 +6,10 @@ import os
 import discord
 import dotenv
 from discord import app_commands
+from sqlalchemy.orm import clear_mappers
 
 from bot import Bot
+from database import Base
 
 root_logger = logging.getLogger()
 logging.basicConfig(level=logging.DEBUG)
@@ -44,7 +46,20 @@ bot.is_owner = is_owner  # TODO: 整合
 @bot.tree.command()
 @app_commands.check(is_owner)
 async def reload(interaction: discord.Interaction, cog: str) -> None:
-    await bot.reload_extension("cogs." + cog)
+    # 先清理舊的殘留
+    clear_mappers()
+    Base.metadata.clear()
+
+    #TODO:有些cog沒有使用database，需要改成只有在有使用資料庫的cog才重建
+    try:
+        await bot.reload_extension("cogs." + cog)
+    except Exception as e:
+        raise e
+    finally:
+        # 重新同步資料庫結構
+        async with bot.db.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
     await interaction.response.send_message(f"重新載入{cog}完成!", ephemeral=True)
     await bot.tree.sync()
 
