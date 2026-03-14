@@ -42,6 +42,26 @@ _ = Translator(translations).translate
 #         self.view.stop()
 
 
+async def select_layout(session: AsyncSession, interaction: discord.Interaction):
+    view_models = (await session.scalars(
+        select(models.Layout)
+        .where(models.Layout.guild_id == interaction.guild_id)
+        .options(
+            selectinload(models.Layout.components).selectinload(models.Component.roles),
+        )
+    )).all()
+
+    if not view_models:
+        return None
+    select_layout_view = SelectLayoutView(views=view_models)
+    await interaction.response.send_message(view=select_layout_view)
+
+    timeout = await select_layout_view.wait()
+    if timeout:
+        return None
+
+    return select_layout_view.selected_layout
+
 def get_ordered_components(components: list[models.Component]) -> list[list[models.Component]]:
     """把一維結構的components轉成二維"""
     # component要依照順序排列
@@ -170,18 +190,29 @@ class RolesEditorBase(LayoutView):
     message: discord.InteractionMessage | discord.Message
 
     def __init__(self, author: discord.Member, cog, components, layout_id: str = None, locale: discord.Locale = None):
-        super().__init__()
+        super().__init__(timeout=180)
         self.author = author
         self.layout_id = layout_id
         self.cog = cog
         self.components = components
         self.locale = locale
 
+        self.on_timeout = self.on_timeout
+
     async def interaction_check(self, interaction: discord.Interaction):
         """Only the command author can use the View."""
 
         return interaction.user == self.author
 
+    async def on_timeout(self):
+        if self.message:
+            view = LayoutView.from_message(self.message)
+
+            for item in view.walk_children():
+                if hasattr(item, "disabled"):
+                    item.disabled = True
+
+            await self.message.edit(view=view)
 
 class RolesEditor_AddComp_Type(RolesEditorBase):
     def __init__(self, old_class):
@@ -211,12 +242,12 @@ class RolesEditor_AddComp_Type(RolesEditorBase):
         view = RolesEditor_AddComp(old_class=self, comp_type=models.ComponentType(selected))
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
-
         self.stop()
 
     async def back_callback(self, interaction: discord.Interaction):
-        new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(view=new_view)
+        view = RolesView_Preview(old_class=self)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
         self.stop()
 
 
@@ -318,17 +349,18 @@ class RolesEditor_AddComp(RolesEditorBase):
         if not self.components[-1]:  # 如果最後一行是之前為了讓新行出現而加的空行，現在有東西了就不用了
             self.components.pop()
 
-        new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(view=new_view)
-
+        view = RolesView_Preview(old_class=self)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
         self.stop()
 
     async def back_callback(self, interaction: discord.Interaction):
         if not self.components[-1]:
             del self.components[-1]
 
-        new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(view=new_view)
+        view = RolesView_Preview(old_class=self)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
         self.stop()
 
 
@@ -406,13 +438,15 @@ class RolesEditor_EditComp(RolesEditorBase):
             self.component.label = modal.new_label
 
             view = RolesEditor_EditComp(old_class=self, row=self.row, index=self.index)
-            await interaction.message.edit(view=view)
-            view.message = interaction.message
+            message = await interaction.message.edit(view=view)
+            view.message = message.resource
+            self.stop()
 
     async def edit_style(self, interaction: discord.Interaction):
         view = RolesEditor_EditCompStyle(old_class=self, row=self.row, index=self.index)
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
+        self.stop()
 
     async def delete_component(self, interaction: discord.Interaction):
         logging.debug(f"total {len(self.components[self.row])} components in row {self.row}")
@@ -421,12 +455,15 @@ class RolesEditor_EditComp(RolesEditorBase):
         else:
             del self.components[self.row][self.index]
 
-        new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(view=new_view)
+        view = RolesView_Preview(old_class=self)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
+        self.stop()
 
     async def back_callback(self, interaction: discord.Interaction):
-        new_view = RolesView_Preview(old_class=self)
-        await interaction.response.edit_message(view=new_view)
+        view = RolesView_Preview(old_class=self)
+        message = await interaction.response.edit_message(view=view)
+        view.message = message.resource
         self.stop()
 
 
@@ -481,12 +518,12 @@ class RolesEditor_EditCompStyle(RolesEditorBase):
         view = RolesEditor_EditComp(old_class=self, row=self.row, index=self.index)
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
+        self.stop()
 
     async def back_callback(self, interaction: discord.Interaction):
         view = RolesEditor_EditComp(old_class=self, row=self.row, index=self.index)
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
-
         self.stop()
 
 
@@ -572,9 +609,6 @@ class RolesViewBase(LayoutView):
         super().__init__(timeout=None if not preview else 180)
         self.locale = locale
 
-        # TODO:這個是否可以移動到Preview
-        self.message: discord.InteractionMessage
-
         if label:
             self.add_item(TextDisplay(label))
 
@@ -641,16 +675,15 @@ class RolesViewBase(LayoutView):
 
 
 class RolesView_Preview(RolesViewBase):
+    message: discord.Message
     """Preview version of the roles view with non-functional callbacks."""
 
-    def __init__(self, old_class, message: discord.InteractionMessage = None):
+    def __init__(self, old_class):
         super().__init__(components=old_class.components, locale=old_class.locale, preview=True,
                          label=_('roles_editing_layout', old_class.locale).format(old_class.layout_id))
         self.author = old_class.author
         self.layout_id = old_class.layout_id
         self.cog = old_class.cog
-
-        self.message = message
 
         action_row = ActionRow()
 
@@ -691,8 +724,8 @@ class RolesView_Preview(RolesViewBase):
                     message = await channel.fetch_message(int(view_model.message_id))
                     assert message is not None
 
-                    new_view = RolesView_Normal(components=self.components, locale=interaction.guild.preferred_locale)
-                    await message.edit(view=new_view)
+                    view = RolesView_Normal(components=self.components, locale=interaction.guild.preferred_locale)
+                    await message.edit(view=view)
 
                 text_view = LayoutView()
                 text_view.add_item(TextDisplay(_('roles_changes_saved', self.locale)))
@@ -724,6 +757,7 @@ class RolesView_Preview(RolesViewBase):
         view = RolesEditor_AddComp_Type(old_class=self)
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
+        self.stop()
 
     async def button_callback(self, interaction: discord.Interaction):
         row, index, rid = map(int, interaction.data['custom_id'].split(", "))
@@ -731,6 +765,7 @@ class RolesView_Preview(RolesViewBase):
         view = RolesEditor_EditComp(old_class=self, row=int(row), index=int(index))
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
+        self.stop()
 
     async def select_callback(self, interaction: discord.Interaction):
         row, index = map(int, interaction.data['custom_id'].split(", "))
@@ -738,11 +773,21 @@ class RolesView_Preview(RolesViewBase):
         view = RolesEditor_EditComp(old_class=self, row=int(row), index=int(index))
         message = await interaction.response.edit_message(view=view)
         view.message = message.resource
+        self.stop()
 
     async def interaction_check(self, interaction: discord.Interaction):
         """Only the command author can use the View."""
-
         return interaction.user == self.author
+
+    async def on_timeout(self):
+        if self.message:
+            view = LayoutView.from_message(self.message)
+
+            for item in view.walk_children():
+                if hasattr(item, "disabled"):
+                    item.disabled = True
+
+            await self.message.edit(view=view)
 
 
 class RolesView_Normal(RolesViewBase):
@@ -826,20 +871,31 @@ class RolesView_Normal(RolesViewBase):
         await interaction.response.defer()
 
 
-class SelectLayoutView(View):
+class SelectLayoutView(LayoutView):
     selected_layout: models.Layout | None = None
+    message: discord.Message
 
-    def __init__(self, views: list[models.Layout]) -> None:
+    def __init__(self, views: list[models.Layout], locale: discord.Locale = None) -> None:
         super().__init__(timeout=None)
 
         self.views = views
+        self.locale = locale
+
+        self.on_timeout = self.on_timeout
+
+        self.add_item(TextDisplay(_('roles_select_edit', self.locale)))
+        for idx, view in enumerate(views):
+            if view.channel_id and view.message_id:
+                self.add_item(TextDisplay(f"{idx}. https://discord.com/channels/{view.guild_id}/{view.channel_id}/{view.message_id}: {view.id}\n"))
+            else:
+                self.add_item(TextDisplay(f"{idx}. (not sent yet) {view.id}\n"))
+
 
         options = [SelectOption(label=f"{idx + 1}. {view.id}", value=str(idx)) for idx, view in
                    enumerate(views)]
-        # TODO: 使用伺服器的主要語言
-        self.select = Select(placeholder=_('roles_select_layout', None), options=options, max_values=1, row=0)
+        self.select = Select(placeholder=_('roles_select_layout', self.locale), options=options, max_values=1, row=0)
         self.select.callback = self.select_callback
-        self.add_item(self.select)
+        self.add_item(ActionRow(self.select))
 
     async def select_callback(self, interaction: discord.Interaction):
         selected_layout_order = int(self.select.values[0])
@@ -851,3 +907,14 @@ class SelectLayoutView(View):
 
         await interaction.response.defer()
         self.stop()
+
+
+    async def on_timeout(self):
+        if self.message:
+            view = LayoutView.from_message(self.message)
+
+            for item in view.walk_children():
+                if hasattr(item, "disabled"):
+                    item.disabled = True
+
+            await self.message.edit(view=view)

@@ -12,7 +12,7 @@ from translator import Translator
 from utils.errors import TransformerMessageNotFound, TransformerNotBotMessage
 from utils.transformers import BotMessageTransformer
 from . import models, views
-from .views import get_ordered_components, RolesEditorBase
+from .views import get_ordered_components, RolesEditorBase, select_layout
 
 from .translations import translations
 
@@ -102,37 +102,15 @@ class Roles(commands.Cog):
             layout_id: str = None,
     ) -> None:
         """Edit the content of a role selection menu message."""
-        if not layout_id:
-            async with self.bot.db.session() as session:
-                view_models = (await session.scalars(
-                    select(models.Layout)
-                    .where(models.Layout.guild_id == interaction.guild_id)
-                    .options(
-                        selectinload(models.Layout.components).selectinload(models.Component.roles),
-                    )
-                )).all()
-
-                if not view_models:
+        async with self.bot.db.session() as session:
+            if not layout_id:
+                selected_layout = await select_layout(session, interaction)
+                if not selected_layout:
                     await interaction.response.send_message(
                         _('roles_no_layouts', interaction),
                         ephemeral=True
                     )
-                    return
-                select_layout_view = views.SelectLayoutView(views=view_models)
-
-                msg = _('roles_select_edit', interaction) + "\n"
-                for idx, view in enumerate(view_models):
-                    if view.channel_id and view.message_id:
-                        msg += f"{idx}. https://discord.com/channels/{view.guild_id}/{view.channel_id}/{view.message_id}: {view.id}\n"
-                    else:
-                        msg += f"{idx}. (not sent yet) {view.id}\n"
-
-                await interaction.response.send_message(msg, view=select_layout_view)
-
-                await select_layout_view.wait()
-                selected_layout = select_layout_view.selected_layout
-        else:
-            async with self.bot.db.session() as session:
+            else:
                 selected_layout = await session.scalar(
                     select(models.Layout)
                     .where(models.Layout.id == layout_id, models.Layout.guild_id == interaction.guild_id)
@@ -154,9 +132,9 @@ class Roles(commands.Cog):
         if interaction.response.is_done():
             message = await interaction.edit_original_response(view=preview_view)
         else:
-            message = await interaction.response.send_message(view=preview_view)
+            message = await interaction.response.send_message(view=preview_view).resource
 
-        preview_view.message = message.resource
+        preview_view.message = message
 
     delete = app_commands.Group(name=locale_str("delete"), description="Delete roles menu or message", parent=roles)
 
@@ -172,7 +150,15 @@ class Roles(commands.Cog):
     ) -> None:
 
         async with self.bot.db.session() as session:
-            async with session.begin():
+            if not layout_id:
+                selected_layout = await select_layout(session, interaction)
+                if not selected_layout:
+                    await interaction.response.send_message(
+                        _('roles_no_layouts', interaction),
+                        ephemeral=True
+                    )
+                    return
+            else:
                 view_model = await session.scalar(
                     select(models.Layout).where(models.Layout.id == layout_id,
                                                 models.Layout.guild_id == interaction.guild_id)
@@ -201,10 +187,12 @@ class Roles(commands.Cog):
 
                 await session.delete(view_model)
 
-        await interaction.response.send_message(
-            _('roles_layout_deleted', interaction).format(layout_id),
-            ephemeral=True
-        )
+        if interaction.response.is_done():
+            await interaction.edit_original_response(content=_('roles_layout_deleted', interaction).format(layout_id))
+        else:
+            await interaction.response.send_message(
+                _('roles_layout_deleted', interaction).format(layout_id)
+            )
 
     @delete.command(name=locale_str("message"))
     @app_commands.describe(
@@ -216,23 +204,22 @@ class Roles(commands.Cog):
         assert isinstance(message.channel, discord.abc.GuildChannel)
 
         async with self.bot.db.session() as session:
-            async with session.begin():
-                view_model = await session.scalar(
-                    select(models.Layout).where(models.Layout.message_id == message.id,
-                                                models.Layout.guild_id == interaction.guild_id)
-                )
+            view_model = await session.scalar(
+                select(models.Layout).where(models.Layout.message_id == message.id,
+                                            models.Layout.guild_id == interaction.guild_id)
+            )
 
-                if view_model is not None:
-                    view_model.message_id = None
-                    view_model.channel_id = None
-                    await session.commit()
-                else:
-                    logging.warning(f"Message {message.id} not found in database.")
-                    await interaction.response.send_message(
-                        _('roles_msg_not_found', interaction),
-                        ephemeral=True
-                    )
-                    return
+            if view_model is not None:
+                view_model.message_id = None
+                view_model.channel_id = None
+                await session.commit()
+            else:
+                logging.warning(f"Message {message.id} not found in database.")
+                await interaction.response.send_message(
+                    _('roles_msg_not_found', interaction),
+                    ephemeral=True
+                )
+                return
 
         await message.delete()
 
@@ -251,23 +238,32 @@ class Roles(commands.Cog):
                          channel: discord.TextChannel | None = None) -> None:
 
         async with self.bot.db.session() as session:
-            view_model: models.Layout = await session.scalar(
-                select(models.Layout)
-                .where(models.Layout.id == layout_id, models.Layout.guild_id == interaction.guild_id)
-                .options(
-                    joinedload(models.Layout.components).joinedload(models.Component.roles),
+            if not layout_id:
+                selected_layout = await select_layout(session, interaction)
+                if not selected_layout:
+                    await interaction.response.send_message(
+                        _('roles_no_layouts', interaction),
+                        ephemeral=True
+                    )
+                    return
+            else:
+                view_model: models.Layout = await session.scalar(
+                    select(models.Layout)
+                    .where(models.Layout.id == layout_id, models.Layout.guild_id == interaction.guild_id)
+                    .options(
+                        joinedload(models.Layout.components).joinedload(models.Component.roles),
+                    )
                 )
-            )
 
-            if view_model is None:
-                await interaction.response.send_message(
-                    _('roles_layout_not_found', interaction).format(layout_id),
-                    ephemeral=True
-                )
-                return
+                if view_model is None:
+                    await interaction.response.send_message(
+                        _('roles_layout_not_found', interaction).format(layout_id),
+                        ephemeral=True
+                    )
+                    return
 
-            if channel is None:
-                channel = interaction.channel
+                if channel is None:
+                    channel = interaction.channel
 
             components = get_ordered_components(view_model.components)
             logging.debug(components)
