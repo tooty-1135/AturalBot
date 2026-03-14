@@ -54,13 +54,11 @@ async def select_layout(session: AsyncSession, interaction: discord.Interaction)
     if not view_models:
         return None
     select_layout_view = SelectLayoutView(views=view_models)
-    await interaction.response.send_message(view=select_layout_view)
+    select_layout_view.message = (await interaction.response.send_message(view=select_layout_view)).resource
 
     timeout = await select_layout_view.wait()
-    if timeout:
-        return None
-
-    return select_layout_view.selected_layout
+    if not timeout:
+        return select_layout_view.selected_layout
 
 def get_ordered_components(components: list[models.Component]) -> list[list[models.Component]]:
     """把一維結構的components轉成二維"""
@@ -214,6 +212,7 @@ class RolesEditorBase(LayoutView):
 
             await self.message.edit(view=view)
 
+
 class RolesEditor_AddComp_Type(RolesEditorBase):
     def __init__(self, old_class):
         super().__init__(author=old_class.author, components=old_class.components, layout_id=old_class.layout_id,
@@ -233,7 +232,6 @@ class RolesEditor_AddComp_Type(RolesEditorBase):
 
         self.back_button = Button(label=_('roles_back', self.locale), style=ButtonStyle.red)
         self.back_button.callback = self.back_callback
-        # TODO：確認直接將component直接放在ActionRow裡面會不會有問題
         self.add_item(ActionRow(self.back_button))
 
     async def select_callback(self, interaction: discord.Interaction):
@@ -335,7 +333,7 @@ class RolesEditor_AddComp(RolesEditorBase):
             case models.ComponentType.SELECT_TOGGLE:
                 comp_label = _('roles_select_role', self.locale)
             case _:
-                comp_label = "Add role"
+                comp_label = _('roles_add_role', self.locale)
 
         self.components[int(self.position_select.values[0])].append(
             models.Component(
@@ -396,7 +394,7 @@ class RolesEditor_EditComp(RolesEditorBase):
         if comp.type.value.startswith("select"):
             select = Select(
                 placeholder=comp.label,
-                options=[SelectOption(label="This is a preview.", value="testtest")],
+                options=[SelectOption(label=_("roles_this_is_preview", self.locale), value="testtest")],
             )
             preview_container.add_item(ActionRow(select))
         elif comp.type.value.startswith("button"):
@@ -876,7 +874,7 @@ class SelectLayoutView(LayoutView):
     message: discord.Message
 
     def __init__(self, views: list[models.Layout], locale: discord.Locale = None) -> None:
-        super().__init__(timeout=None)
+        super().__init__()
 
         self.views = views
         self.locale = locale
@@ -886,10 +884,10 @@ class SelectLayoutView(LayoutView):
         self.add_item(TextDisplay(_('roles_select_edit', self.locale)))
         for idx, view in enumerate(views):
             if view.channel_id and view.message_id:
-                self.add_item(TextDisplay(f"{idx}. https://discord.com/channels/{view.guild_id}/{view.channel_id}/{view.message_id}: {view.id}\n"))
+                self.add_item(TextDisplay(
+                    f"{idx}. (https://discord.com/channels/{view.guild_id}/{view.channel_id}/{view.message_id}) {view.id}\n"))
             else:
-                self.add_item(TextDisplay(f"{idx}. (not sent yet) {view.id}\n"))
-
+                self.add_item(TextDisplay(f"{idx}. ({_('roles_not_sent', self.locale)}) {view.id}\n"))
 
         options = [SelectOption(label=f"{idx + 1}. {view.id}", value=str(idx)) for idx, view in
                    enumerate(views)]
@@ -907,7 +905,6 @@ class SelectLayoutView(LayoutView):
 
         await interaction.response.defer()
         self.stop()
-
 
     async def on_timeout(self):
         if self.message:
