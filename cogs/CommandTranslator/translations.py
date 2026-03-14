@@ -69,6 +69,28 @@ translations = {
             Lo.american_english: "View information about a user / member.",
             Lo.taiwan_chinese: "查看有關用戶的資訊。"
         },
+
+        ### roles
+        "create_and_manage_role_selection_menus": {
+            Lo.american_english: "Create and manage role selection menus.",
+            Lo.taiwan_chinese: "建立和管理身份組選單"
+        },
+        "edit_role_selection_menu": {
+            Lo.american_english: "Edit the content of a role selection.",
+            Lo.taiwan_chinese: "編輯身份組選單的內容"
+        },
+        "delete_role_selection_menu_view": {
+            Lo.american_english: "Delete a role selection menu view.",
+            Lo.taiwan_chinese: "刪除身份組選單檢視"
+        },
+        "delete_role_selection_menu_message": {
+            Lo.american_english: "Delete a role selection menu message.(The view will still be saved in the database.)",
+            Lo.taiwan_chinese: "刪除身份組選單訊息(檢視仍會保存在資料庫中。)"
+        },
+        "send_role_selection_menu": {
+            Lo.american_english: "Send a role selection menu to a channel.",
+            Lo.taiwan_chinese: "將身份組選單發送到頻道"
+        },
     },
     TCL.group_name: {
         "info": {
@@ -93,14 +115,33 @@ translations = {
             Lo.american_english: "Create and manage role selection menus",
             Lo.taiwan_chinese: "建立和管理身份組選單"
         },
+        "delete_selection_menus": {
+            Lo.american_english: "Delete roles menu or message",
+            Lo.taiwan_chinese: "刪除身份組選單或訊息"
+        },
     },
     TCL.parameter_name: {
     },
     TCL.parameter_description: {
+        ### info
         "info_about_user_user": {
             Lo.american_english: "The user to get information about",
             Lo.taiwan_chinese: "要獲取資訊的用戶"
-        }
+        },
+
+        ### roles
+        "id_of_layout": {
+            Lo.american_english: "The id of the view.",
+            Lo.taiwan_chinese: "檢視的ID。"
+        },
+        "message_remove": {
+            Lo.american_english: "Link or ID of the message to remove.",
+            Lo.taiwan_chinese: "要移除的訊息的連結或ID。"
+        },
+        "channel_send_message": {
+            Lo.american_english: "The channel to send the message.",
+            Lo.taiwan_chinese: "發送訊息的頻道。"
+        },
     },
     # TCL.choice_name: {},
     # TCL.other: {},

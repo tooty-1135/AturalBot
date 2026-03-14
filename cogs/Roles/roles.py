@@ -23,7 +23,7 @@ _ = Translator(translations).translate_interaction
 class Roles(commands.Cog):
     roles = app_commands.Group(
         name=locale_str("roles"),
-        description="Create and manage role selection menus",
+        description=locale_str("role_selection_menus"),
         default_permissions=discord.Permissions(manage_roles=True),
     )
 
@@ -64,12 +64,13 @@ class Roles(commands.Cog):
                                                 models.Layout.id.contains(current))
                 )).all()
                 choices = [
-                    app_commands.Choice(name=f"{view.id} ({'sent' if view.message_id else 'not sent'})", value=view.id)
+                    app_commands.Choice(name=_("role_view_id_autocomplete", interaction).format(view.id, (
+                        'sent' if view.message_id else 'not sent')), value=view.id)
                     for view in results if str(current) in view.id
                 ]
                 return choices[:25]
 
-    @roles.command(name=locale_str("setup"))
+    @roles.command(name=locale_str("setup"), description=locale_str("create_and_manage_role_selection_menus"))
     async def roles_setup(self, interaction: discord.Interaction) -> None:
         assert isinstance(interaction.user, discord.Member)
 
@@ -91,9 +92,9 @@ class Roles(commands.Cog):
         message = await interaction.response.send_message(view=preview_layout)
         preview_layout.message = message.resource
 
-    @roles.command(name=locale_str("edit"))
+    @roles.command(name=locale_str("edit"), description=locale_str("edit_role_selection_menu"))
     @app_commands.describe(
-        layout_id="The id of the view to edit."
+        layout_id=locale_str("id_of_layout")
     )
     @app_commands.autocomplete(layout_id=layout_id_autocomplete)
     async def roles_edit(
@@ -101,7 +102,6 @@ class Roles(commands.Cog):
             interaction: discord.Interaction,
             layout_id: str = None,
     ) -> None:
-        """Edit the content of a role selection menu message."""
         async with self.bot.db.session() as session:
             if not layout_id:
                 selected_layout = await select_layout(session, interaction)
@@ -136,12 +136,11 @@ class Roles(commands.Cog):
 
         preview_view.message = message
 
-    delete = app_commands.Group(name=locale_str("delete"), description="Delete roles menu or message", parent=roles)
+    delete = app_commands.Group(name=locale_str("delete"), description=locale_str("delete_selection_menus"),
+                                parent=roles)
 
-    @delete.command(name=locale_str("layout"))
-    @app_commands.describe(
-        layout_id="The id of the view to edit."
-    )
+    @delete.command(name=locale_str("layout"), description=locale_str("delete_role_selection_menu_view"))
+    @app_commands.describe(layout_id=locale_str("id_of_layout"))
     @app_commands.autocomplete(layout_id=layout_id_autocomplete)
     async def roles_delete_layout(
             self,
@@ -194,13 +193,10 @@ class Roles(commands.Cog):
                 _('roles_layout_deleted', interaction).format(layout_id)
             )
 
-    @delete.command(name=locale_str("message"))
-    @app_commands.describe(
-        message="Link or ID of the message to remove. Must be the bot's!"
-    )
+    @delete.command(name=locale_str("message"), description=locale_str("delete_role_selection_menu_message"))
+    @app_commands.describe(message=locale_str("message_remove"))
     async def roles_delete_msg(self, interaction: discord.Interaction,
                                message: app_commands.Transform[discord.Message, BotMessageTransformer]) -> None:
-        """Delete a role selection menu message.(The view will still be saved in the database.)"""
         assert isinstance(message.channel, discord.abc.GuildChannel)
 
         async with self.bot.db.session() as session:
@@ -228,10 +224,10 @@ class Roles(commands.Cog):
             ephemeral=True
         )
 
-    @roles.command(name=locale_str("send"))
+    @roles.command(name=locale_str("send"), description=locale_str("send_role_selection_menu"))
     @app_commands.describe(
-        layout_id="The id of the view.",
-        channel="The channel to send the message.",
+        layout_id=locale_str("id_of_layout"),
+        channel=locale_str("channel_send_message"),
     )
     @app_commands.autocomplete(layout_id=layout_id_autocomplete)
     async def roles_send(self, interaction: discord.Interaction, layout_id: str,

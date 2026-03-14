@@ -45,6 +45,10 @@ translations = {
         Lo.american_english: "Select a role to add",
         Lo.taiwan_chinese: "選擇要新增的身分組"
     },
+    "roles_add_role": {
+        Lo.american_english: "Add role",
+        Lo.taiwan_chinese: "新增身分組"
+    },
     "roles_no_row": {
         Lo.american_english: "No available row",
         Lo.taiwan_chinese: "沒有可用的列"
@@ -176,5 +180,16 @@ translations = {
     "roles_no_layouts": {
         Lo.american_english: "No layouts found, create one with `/roles setup`.",
         Lo.taiwan_chinese: "找不到檢視，使用 `/roles setup` 來建立一個。"
+    },
+    "role_view_id_autocomplete": {
+        Lo.american_english: "{0} ({1})",
+    },
+    "roles_this_is_preview": {
+        Lo.american_english: "This is a preview of the component",
+        Lo.taiwan_chinese: "這是元件的預覽"
+    },
+    "roles_not_sent": {
+        Lo.american_english: "not sent yet",
+        Lo.taiwan_chinese: "尚未傳送",
     },
 }
